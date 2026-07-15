@@ -2,6 +2,10 @@
 
 **Find the shortest co-authorship path between any two scholars — your Erdős number, generalized.**
 
+<p align="center">
+  <a href="https://academiachain.netlify.app/"><strong>🌐 Try it live → academiachain.netlify.app</strong></a>
+</p>
+
 Type in two researchers' names and AcademiaChain traverses the [OpenAlex](https://openalex.org)
 open scholarly graph with a **bidirectional breadth-first search**, streaming live progress to
 your browser and returning the chain of scholars and the bridging papers (title, year, DOI) that
@@ -34,11 +38,11 @@ where:
 * each edge $e_i = (v_{i-1}, v_i) \in E$ is realized by at least one collaborative work $W_i$;
 * the **edge weight** $W(e_i)$ captures the collaborative intensity — the number of co-authored papers between $v_{i-1}$ and $v_i$:
 
-$$W(e_i) = \left|\, \{ w \in \text{Works} \mid \{v_{i-1}, v_i\} \subseteq \text{authors}(w) \} \,\right|$$
+$$W(e_i) = \bigl| \lbrace w \in \text{Works} \mid \lbrace v_{i-1}, v_i \rbrace \subseteq \text{authors}(w) \rbrace \bigr|$$
 
-The objective is to find the path $P$ minimizing the degrees of separation (path length $k$), subject to a hard depth constraint:
+The objective is to find the path $P$ minimizing the degrees of separation (path length $k$), subject to a hard depth constraint, where $k_{\max}$ corresponds to the `MAX_DEPTH` parameter:
 
-$$\min_{P} \; k(P) \quad \text{s.t.} \quad k \le \text{MAX\_DEPTH}$$
+$$\min_{P} k(P) \quad \text{s.t.} \quad k \le k_{\max}$$
 
 The frontend renders $W(e_i)$ directly: aggregated links grow thicker and brighter with each additional shared paper, so high-intensity partnerships are visually salient in the constellation graph.
 
@@ -55,7 +59,7 @@ $$V_{visited,F} \cap V_{visited,B} \neq \emptyset$$
 * **Degree pruning & noise filtering:**
   * *Temporal filtering* — only the $N$ most recent works of any author are queried, capturing **active** collaboration:
 
-$$\text{Works}(v) = \text{Top}_{20}\left( \{ w \in \text{Works} \mid v \in \text{authors}(w) \} \;\text{sorted by date desc} \right)$$
+$$\text{Works}(v) = \text{Top}_{20}\bigl( \lbrace w \in \text{Works} \mid v \in \text{authors}(w) \rbrace ~ \text{sorted by date desc} \bigr)$$
 
   * *Hyper-authorship exclusion* — large consortium papers (e.g., global clinical trials, particle-physics collaborations) act as low-affinity noise and are skipped outright:
 
@@ -63,7 +67,7 @@ $$\text{Filter out } w \quad \text{if} \quad |\text{authors}(w)| > 15$$
 
 * **Local in-memory deduplication:** a cache of resolved nodes lets each BFS round bypass previously traversed scholars:
 
-$$\text{Next\_Frontier} = \bigcup_{v \in \text{Frontier}} \text{Collaborators}(v) \setminus V_{visited}$$
+$$F_{\text{next}} = \bigcup_{v \in F_{\text{frontier}}} \text{Collaborators}(v) \setminus V_{\text{visited}}$$
 
 ### 📈 Parameter Matrix (The Golden Ratio)
 

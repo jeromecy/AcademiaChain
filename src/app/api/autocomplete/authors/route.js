@@ -106,11 +106,11 @@ export async function GET(request) {
       worksCount: r.works_count ?? null,
     }));
 
-    return Response.json(
-      { results },
-      // identical prefixes are common while typing — let the CDN absorb them
-      { headers: { 'Cache-Control': 'public, max-age=300' } }
-    );
+    // IMPORTANT: never `Cache-Control: public` here. Netlify's Next.js runtime
+    // sets `netlify-vary` so the edge cache key ignores our `q` parameter —
+    // a public max-age caused ONE author's results to be served to every
+    // query site-wide for 5 minutes. The 300ms debounce is optimization enough.
+    return Response.json({ results }, { headers: { 'Cache-Control': 'no-store' } });
   } catch (err) {
     console.error('[api/autocomplete/authors]', err);
     return Response.json({ results: [] });
