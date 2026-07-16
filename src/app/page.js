@@ -20,6 +20,16 @@ function credentialHeaders() {
   return headers;
 }
 
+// Search Intensity Control — mirrors INTENSITY_PRESETS in api/search/route.js.
+// Trades search depth/breadth for speed; heavier presets cost more OpenAlex
+// calls and run closer to the serverless function's 10s hard timeout.
+const INTENSITY_OPTIONS = [
+  { value: 'lite', label: 'Lite', hint: 'Speed-First', depth: 3 },
+  { value: 'standard', label: 'Standard', hint: 'Balanced', depth: 4 },
+  { value: 'intensive', label: 'Intensive', hint: 'Deep-Dive', depth: 5 },
+];
+const DEFAULT_INTENSITY = 'standard';
+
 const STATE_ICONS = {
   resolving_authors: '🔍',
   authors_resolved: '🎯',
@@ -50,6 +60,7 @@ export default function Home() {
   const [showSettings, setShowSettings] = useState(false);
   const [apiKey, setApiKey] = useState('');
   const [email, setEmail] = useState('');
+  const [intensity, setIntensity] = useState(DEFAULT_INTENSITY);
 
   // Restore saved credentials from localStorage on first load
   useEffect(() => {
@@ -80,6 +91,8 @@ export default function Home() {
           // Credentials Center: user's own quota takes priority server-side
           userApiKey: apiKey.trim() || null,
           userEmail: email.trim() || null,
+          // Search Intensity Control: trades depth/breadth for speed
+          intensity,
         }),
       });
 
@@ -186,6 +199,9 @@ export default function Home() {
             setAuthor={setAuthorB}
           />
         </div>
+
+        <IntensityControl value={intensity} onChange={setIntensity} disabled={loading} />
+
         <button className="connect-btn" type="submit" disabled={loading}>
           {loading ? 'Traversing the network…' : '⚡ Connect'}
         </button>
@@ -279,6 +295,34 @@ function CredentialsPanel({ apiKey, setApiKey, email, setEmail, onClose }) {
         email is used for the polite pool when no key is set.
       </p>
     </section>
+  );
+}
+
+/* ---------------- Search Intensity Control ---------------- */
+
+function IntensityControl({ value, onChange, disabled }) {
+  return (
+    <div className="intensity-control">
+      <div className="intensity-label">Search Intensity</div>
+      <div className="intensity-segments" role="radiogroup" aria-label="Search intensity">
+        {INTENSITY_OPTIONS.map((opt) => (
+          <button
+            key={opt.value}
+            type="button"
+            role="radio"
+            aria-checked={value === opt.value}
+            className={`intensity-seg ${value === opt.value ? 'active' : ''}`}
+            onClick={() => onChange(opt.value)}
+            disabled={disabled}
+          >
+            <span className="intensity-seg-name">{opt.label}</span>
+            <span className="intensity-seg-hint">
+              {opt.hint} · Depth {opt.depth}
+            </span>
+          </button>
+        ))}
+      </div>
+    </div>
   );
 }
 
@@ -429,8 +473,8 @@ function AdvancedSearchModal({ initialName, onPick, onClose }) {
   // nested <form> is invalid HTML — the browser would strip it and the search
   // button would submit the OUTER form instead of running this modal's search.
   return createPortal(
-    <div className="modal-overlay" onClick={onClose}>
-      <div className="modal-box adv-box" onClick={(e) => e.stopPropagation()}>
+    <div className="ac-scrim" onClick={onClose}>
+      <div className="ac-dialog adv-box" onClick={(e) => e.stopPropagation()}>
         <section className="adv-panel">
           <div className="settings-head">
             <h3>🔍 Advanced Disambiguation</h3>
@@ -945,9 +989,11 @@ function NotFound({ result }) {
 
 function Meta({ meta }) {
   if (!meta) return null;
+  const intensityLabel = INTENSITY_OPTIONS.find((o) => o.value === meta.intensity)?.label;
   return (
     <div className="meta-line">
       {(meta.elapsedMs / 1000).toFixed(1)}s · {meta.apiCalls} OpenAlex API calls
+      {intensityLabel && <> · {intensityLabel} intensity</>}
     </div>
   );
 }
@@ -990,8 +1036,8 @@ function CertificateModal({ result, onClose }) {
   }
 
   return (
-    <div className="modal-overlay" onClick={onClose}>
-      <div className="modal-box" onClick={(e) => e.stopPropagation()}>
+    <div className="ac-scrim" onClick={onClose}>
+      <div className="ac-dialog" onClick={(e) => e.stopPropagation()}>
         <div className="certificate" ref={certRef}>
           <div className="cert-inner">
             <div className="cert-brand">🔗 AcademiaChain</div>
@@ -1028,7 +1074,7 @@ function CertificateModal({ result, onClose }) {
           </div>
         </div>
 
-        <div className="modal-actions">
+        <div className="ac-dialog-actions">
           <button className="cert-btn" onClick={handleDownload} disabled={saving}>
             {saving ? 'Rendering…' : '💾 Save as PNG'}
           </button>

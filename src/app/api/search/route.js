@@ -16,26 +16,42 @@
 // co-authors from the `authorships` field.
 //
 // Performance guards (Netlify free tier has a hard 10s function timeout):
-//   - MAX_DEPTH:            path length capped at 4 hops (A→B→C→D→E)
-//   - WORKS_PER_AUTHOR:     only the 10 most recent works per author
-//   - MAX_AUTHORS_PER_WORK: works with more than 8 authors are skipped
+//   - maxDepth:            path length capped at N hops (A→B→C→…), see
+//                          Search Intensity Control below
+//   - worksPerAuthor:      only the N most recent works per author, ditto
+//   - MAX_AUTHORS_PER_WORK: works with more than 15 authors are skipped
 //                           entirely (mega-collaborations explode the tree)
 //   - concurrency limiter + inter-batch delay + 429 retry (rate-limit safety)
 //   - module-level in-memory cache for co-author lookups (warm across requests)
 //   - TIME_BUDGET_MS with per-fetch AbortSignal tied to the remaining budget
+//
+// Search Intensity Control: the frontend lets the user trade search depth for
+// speed via `intensity: 'lite' | 'standard' | 'intensive'` in the request
+// body. Each preset scales maxDepth/worksPerAuthor/frontierCap together —
+// wider and deeper searches cover more of the collaboration graph but cost
+// more OpenAlex calls and run closer to the 10s function timeout.
 
 export const dynamic = 'force-dynamic';
 
 const OPENALEX = 'https://api.openalex.org';
 
 const TIME_BUDGET_MS = Number(process.env.SEARCH_TIME_BUDGET_MS ?? 8500);
-const MAX_DEPTH = 4;             // max path length in hops (degrees)
-const FRONTIER_CAP = 12;         // authors expanded per BFS level
-const WORKS_PER_AUTHOR = 20;     // most recent works fetched per author
-const MAX_AUTHORS_PER_WORK = 15;  // skip works with more co-authors than this
+const MAX_AUTHORS_PER_WORK = 15; // skip works with more co-authors than this
 const CONCURRENCY = 6;           // parallel OpenAlex requests
 const BATCH_DELAY_MS = 100;      // pause between request batches
 const CACHE_MAX = 500;           // cached co-author lists (FIFO eviction)
+
+const INTENSITY_PRESETS = {
+  lite: { maxDepth: 3, worksPerAuthor: 10, frontierCap: 8 },
+  standard: { maxDepth: 4, worksPerAuthor: 20, frontierCap: 12 },
+  intensive: { maxDepth: 5, worksPerAuthor: 35, frontierCap: 18 },
+};
+const DEFAULT_INTENSITY = 'standard';
+
+function resolveIntensity(raw) {
+  const key = INTENSITY_PRESETS[raw] ? raw : DEFAULT_INTENSITY;
+  return { intensity: key, config: INTENSITY_PRESETS[key] };
+}
 
 // ---------------------------------------------------------------------------
 // Rate limiting: a p-limit style semaphore + simple delay helper + 429 retry
@@ -70,7 +86,11 @@ const limit = createLimiter(CONCURRENCY);
 // ---------------------------------------------------------------------------
 // In-memory caches (module scope — survive across warm serverless invocations)
 // ---------------------------------------------------------------------------
-const coauthorCache = new Map(); // authorId -> Map<coauthorId, info>
+// Keyed by `${authorId}:${worksPerAuthor}` — NOT authorId alone. Different
+// intensity presets fetch a different number of works per author, so a
+// "lite" (10-work) lookup must never be served to a "standard"/"intensive"
+// request expecting a deeper sample (and vice versa).
+const coauthorCache = new Map(); // "authorId:worksPerAuthor" -> Map<coauthorId, info>
 const authorCache = new Map();   // normalized name -> resolved author
 
 function cachePut(cache, key, value, max = CACHE_MAX) {
@@ -228,8 +248,9 @@ async function getAuthorById(id, creds) {
 // Get an author's co-authors from their most recent works (hard pruning)
 // Returns Map<coauthorId, { name, paper: {title, year, doi}, strength }>
 // ---------------------------------------------------------------------------
-async function getCoauthors(authorId, deadline, creds) {
-  if (coauthorCache.has(authorId)) return coauthorCache.get(authorId);
+async function getCoauthors(authorId, deadline, creds, config) {
+  const cacheKey = `${authorId}:${config.worksPerAuthor}`;
+  if (coauthorCache.has(cacheKey)) return coauthorCache.get(cacheKey);
 
   // Tie the per-fetch abort to the remaining time budget so a slow request
   // can never drag the whole search past Netlify's hard timeout.
@@ -241,7 +262,7 @@ async function getCoauthors(authorId, deadline, creds) {
     {
       filter: `authorships.author.id:${authorId}`,
       sort: 'publication_date:desc',
-      'per-page': String(WORKS_PER_AUTHOR),
+      'per-page': String(config.worksPerAuthor),
       select: 'id,title,doi,publication_year,authorships',
     },
     Math.min(6000, remaining),
@@ -278,7 +299,7 @@ async function getCoauthors(authorId, deadline, creds) {
     }
   }
 
-  cachePut(coauthorCache, authorId, coauthors);
+  cachePut(coauthorCache, cacheKey, coauthors);
   return coauthors;
 }
 
@@ -287,7 +308,7 @@ async function getCoauthors(authorId, deadline, creds) {
 // where `paper` is the work linking this author to `parent`.
 // Emits progress through onProgress({state, message, ...}).
 // ---------------------------------------------------------------------------
-async function bidirectionalBFS(a, b, deadline, onProgress, creds) {
+async function bidirectionalBFS(a, b, deadline, onProgress, creds, config) {
   if (a.id === b.id) {
     return { chain: [{ id: a.id, name: a.name, paper: null }], apiCalls: 0 };
   }
@@ -300,9 +321,9 @@ async function bidirectionalBFS(a, b, deadline, onProgress, creds) {
   let depthB = 0;
   let apiCalls = 0;
 
-  // Each expansion adds one hop to that side; cap the combined depth at 4
-  // so any path we return is at most 4 degrees (A → B → C → D → E).
-  while (depthA + depthB < MAX_DEPTH) {
+  // Each expansion adds one hop to that side; cap the combined depth at
+  // config.maxDepth so any path we return is at most that many degrees.
+  while (depthA + depthB < config.maxDepth) {
     const expandA = frontierA.length <= frontierB.length;
     const frontier = expandA ? frontierA : frontierB;
     const visited = expandA ? visitedA : visitedB;
@@ -319,7 +340,7 @@ async function bidirectionalBFS(a, b, deadline, onProgress, creds) {
         : `Reverse-expanding level-${level} collaborators of ${who.name}…`,
     });
 
-    const toExpand = frontier.slice(0, FRONTIER_CAP);
+    const toExpand = frontier.slice(0, config.frontierCap);
     const nextCandidates = [];
     let discovered = 0;
 
@@ -330,7 +351,7 @@ async function bidirectionalBFS(a, b, deadline, onProgress, creds) {
       const chunk = toExpand.slice(i, i + CONCURRENCY);
       apiCalls += chunk.length;
       const results = await Promise.all(
-        chunk.map((id) => getCoauthors(id, deadline, creds).catch(() => new Map()))
+        chunk.map((id) => getCoauthors(id, deadline, creds, config).catch(() => new Map()))
       );
 
       for (let j = 0; j < chunk.length; j++) {
@@ -430,6 +451,10 @@ export async function POST(request) {
   // takes priority over the server's env credentials for every OpenAlex call.
   const creds = resolveCreds(body.userApiKey, body.userEmail);
 
+  // Search Intensity Control: lite/standard/intensive scale maxDepth,
+  // worksPerAuthor, and frontierCap together — see INTENSITY_PRESETS above.
+  const { intensity, config } = resolveIntensity(body.intensity);
+
   const encoder = new TextEncoder();
   const stream = new ReadableStream({
     async start(controller) {
@@ -440,7 +465,11 @@ export async function POST(request) {
       const deadline = started + TIME_BUDGET_MS;
 
       try {
-        send({ state: 'resolving_authors', message: 'Resolving author identities on OpenAlex…' });
+        send({
+          state: 'resolving_authors',
+          message: `Resolving author identities on OpenAlex… (${intensity} mode, max depth ${config.maxDepth})`,
+          intensity,
+        });
 
         // Prefer exact IDs locked in by the autocomplete; fall back to fuzzy
         // name search with disambiguation scoring.
@@ -466,7 +495,7 @@ export async function POST(request) {
           authorB: b,
         });
 
-        const result = await bidirectionalBFS(a, b, deadline, send, creds);
+        const result = await bidirectionalBFS(a, b, deadline, send, creds, config);
         const elapsedMs = Date.now() - started;
 
         if (result.chain) {
@@ -479,7 +508,7 @@ export async function POST(request) {
               authorA: a,
               authorB: b,
               chain: result.chain,
-              meta: { elapsedMs, apiCalls: result.apiCalls ?? 0 },
+              meta: { elapsedMs, apiCalls: result.apiCalls ?? 0, intensity },
             },
           });
         } else {
@@ -487,7 +516,7 @@ export async function POST(request) {
             state: result.timeout ? 'timeout' : 'not_found',
             message: result.timeout
               ? 'Search time budget exhausted — the two scholars are far apart in the collaboration network.'
-              : `No connection found within ${MAX_DEPTH} degrees of co-authorship.`,
+              : `No connection found within ${config.maxDepth} degrees of co-authorship.`,
           });
           send({
             state: 'done',
@@ -498,8 +527,8 @@ export async function POST(request) {
               authorB: b,
               reason: result.timeout
                 ? 'Timed out before a path emerged. They may still be connected — just beyond what fits in the time budget.'
-                : `No connection path found within ${MAX_DEPTH} degrees of co-authorship.`,
-              meta: { elapsedMs, apiCalls: result.apiCalls ?? 0 },
+                : `No connection path found within ${config.maxDepth} degrees of co-authorship.`,
+              meta: { elapsedMs, apiCalls: result.apiCalls ?? 0, intensity },
             },
           });
         }

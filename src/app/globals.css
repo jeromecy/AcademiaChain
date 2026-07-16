@@ -216,6 +216,64 @@ body {
   cursor: not-allowed;
 }
 
+/* ---- Search Intensity Control (segmented control) ---- */
+.intensity-control {
+  margin-top: 18px;
+}
+.intensity-label {
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--ink-soft);
+  margin-bottom: 8px;
+  letter-spacing: 0.4px;
+}
+.intensity-segments {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 6px;
+  padding: 4px;
+  background: #eef1f7;
+  border: 1px solid var(--line);
+  border-radius: 11px;
+}
+.intensity-seg {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  padding: 9px 6px;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  cursor: pointer;
+  font-family: inherit;
+  transition: background 0.15s, box-shadow 0.15s;
+}
+.intensity-seg:hover:not(:disabled):not(.active) {
+  background: rgba(59, 91, 219, 0.08);
+}
+.intensity-seg:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+.intensity-seg.active {
+  background: var(--card);
+  box-shadow: 0 2px 8px rgba(26, 35, 51, 0.12);
+}
+.intensity-seg-name {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--ink-soft);
+}
+.intensity-seg.active .intensity-seg-name {
+  color: var(--accent);
+}
+.intensity-seg-hint {
+  font-size: 10.5px;
+  color: var(--ink-soft);
+  opacity: 0.8;
+}
+
 /* ---- Loading 动画：脉冲网络 ---- */
 .loading-box {
   margin-top: 34px;
@@ -729,10 +787,11 @@ body {
 }
 
 /* ---- Certificate modal ---- */
-.modal-overlay {
+.ac-scrim {
   position: fixed;
   inset: 0;
   background: rgba(15, 20, 34, 0.65);
+  -webkit-backdrop-filter: blur(3px);
   backdrop-filter: blur(3px);
   display: flex;
   align-items: center;
@@ -741,18 +800,18 @@ body {
   z-index: 50;
   animation: rise 0.25s ease;
 }
-.modal-box {
+.ac-dialog {
   max-width: 640px;
   width: 100%;
   max-height: 92vh;
   overflow-y: auto;
 }
-.modal-actions {
+.ac-dialog-actions {
   display: flex;
   gap: 12px;
   margin-top: 14px;
 }
-.modal-actions .cert-btn {
+.ac-dialog-actions .cert-btn {
   margin-top: 0;
   flex: 1;
 }
