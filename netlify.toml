@@ -1,0 +1,17 @@
+# Netlify deployment config (project root).
+# Netlify auto-detects Next.js and enables the official runtime
+# (@netlify/plugin-nextjs); API routes (e.g. src/app/api/search/route.js)
+# are automatically packaged as serverless functions.
+
+[build]
+  command = "npm run build"
+  publish = ".next"
+
+[[plugins]]
+  package = "@netlify/plugin-nextjs"
+
+# NOTE: do not put secrets here (this file is committed to git).
+# Set these in the Netlify dashboard instead:
+#   Site configuration -> Environment variables
+#     OPENALEX_MAIL    = your-email@example.com
+#     OPENALEX_API_KEY = ... (optional)
