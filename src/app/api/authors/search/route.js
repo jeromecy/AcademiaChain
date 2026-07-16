@@ -53,12 +53,25 @@ async function oaFetch(path, params, creds) {
 
 const shortId = (id) => (id ? id.replace('https://openalex.org/', '') : null);
 
+// IMPORTANT: every response here must set Cache-Control explicitly. Netlify's
+// Next.js runtime edge-caches GET routes keyed in a way that can ignore query
+// strings (`netlify-vary`), so an implicit/default cache policy risks serving
+// one query's results (or an error/empty response) to every other query site-
+// wide — this bit autocomplete before `no-store` was added there; hardening
+// this route the same way pre-empts the identical class of bug.
+function json(body, init = {}) {
+  return Response.json(body, {
+    ...init,
+    headers: { ...init.headers, 'Cache-Control': 'no-store' },
+  });
+}
+
 export async function GET(request) {
   const { searchParams } = new URL(request.url);
   const q = (searchParams.get('q') ?? '').trim();
   const institution = (searchParams.get('institution') ?? '').trim();
   if (q.length < 2) {
-    return Response.json({ error: 'Query must be at least 2 characters' }, { status: 400 });
+    return json({ error: 'Query must be at least 2 characters' }, { status: 400 });
   }
 
   const creds = resolveCreds(
@@ -83,7 +96,7 @@ export async function GET(request) {
       }));
       institutionIds = institutionMatches.map((r) => r.id);
       if (institutionIds.length === 0) {
-        return Response.json({
+        return json({
           results: [],
           note: `No institution on OpenAlex matched "${institution}" — try a shorter keyword.`,
         });
@@ -115,9 +128,9 @@ export async function GET(request) {
       };
     });
 
-    return Response.json({ results, institutionMatches });
+    return json({ results, institutionMatches });
   } catch (err) {
     console.error('[api/authors/search]', err);
-    return Response.json({ error: `Advanced search failed: ${err.message}` }, { status: 502 });
+    return json({ error: `Advanced search failed: ${err.message}` }, { status: 502 });
   }
 }
